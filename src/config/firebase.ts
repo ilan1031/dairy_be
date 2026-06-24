@@ -62,6 +62,7 @@ function initializeFirebase(): void {
       admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     }
     firestore = admin.firestore();
+    firestore.settings({ ignoreUndefinedProperties: true });
     console.log(`[Firebase] Firestore connected — project: ${serviceAccount.projectId || projectIdFromEnv()}`);
   } catch (err) {
     console.error('[Firebase] Failed to initialize from .env:', err);
