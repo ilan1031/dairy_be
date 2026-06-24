@@ -1,0 +1,20 @@
+[
+  {
+    "milkType": "Cow Milk",
+    "currentPrice": 42,
+    "updatedAt": 1782243856008,
+    "id": "Cow Milk"
+  },
+  {
+    "milkType": "Buffalo Milk",
+    "currentPrice": 58,
+    "updatedAt": 1782243856008,
+    "id": "Buffalo Milk"
+  },
+  {
+    "milkType": "A2 Milk",
+    "currentPrice": 69.8,
+    "updatedAt": 1782244840461,
+    "id": "A2 Milk"
+  }
+]

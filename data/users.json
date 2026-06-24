@@ -1,0 +1,25 @@
+[
+  {
+    "id": "builtin-admin",
+    "name": "Super Admin",
+    "email": "abielan@superadmin.com",
+    "role": "superadmin",
+    "active": true,
+    "subscription": {
+      "plan": "lifetime"
+    },
+    "permissions": {
+      "canCreate": true,
+      "canRead": true,
+      "canUpdate": true,
+      "canDelete": true,
+      "allowedPages": [
+        "*"
+      ],
+      "canUseSubscription": true,
+      "canViewOthers": true
+    },
+    "createdAt": 1782243856008,
+    "updatedAt": 1782243856008
+  }
+]

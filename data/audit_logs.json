@@ -1,0 +1,59 @@
+[
+  {
+    "id": "audit_1782244694819_vmvgtf",
+    "userId": "session",
+    "userName": "Arun Kumar",
+    "userEmail": "abielan@superadmin.com",
+    "action": "LOGIN",
+    "resourceType": "session",
+    "resourceId": "abielan@superadmin.com",
+    "details": null,
+    "createdAt": 1782244694819
+  },
+  {
+    "id": "audit_1782244839836_xa6jsx",
+    "userId": "builtin-admin",
+    "userName": "Super Admin",
+    "userEmail": "abielan@superadmin.com",
+    "action": "PRICE_UPDATE",
+    "resourceType": "price_config",
+    "resourceId": "A2 Milk",
+    "details": {
+      "oldPrice": 75,
+      "newPrice": 69.8
+    },
+    "createdAt": 1782244839836
+  },
+  {
+    "id": "audit_1782244852993_3bj8o6",
+    "userId": "builtin-admin",
+    "userName": "Super Admin",
+    "userEmail": "abielan@superadmin.com",
+    "action": "CREATE",
+    "resourceType": "customer",
+    "resourceId": "8oko1ck7z",
+    "details": {
+      "name": "Customer 1",
+      "phone": ""
+    },
+    "createdAt": 1782244852993
+  },
+  {
+    "id": "audit_1782244856353_if2vef",
+    "userId": "builtin-admin",
+    "userName": "Super Admin",
+    "userEmail": "abielan@superadmin.com",
+    "action": "SALE_CREATE",
+    "resourceType": "sale",
+    "resourceId": "vncxfvdec",
+    "details": {
+      "customerName": "Customer 1",
+      "milkType": "A2 Milk",
+      "liters": 1,
+      "totalAmount": 69.8,
+      "paymentType": "CASH",
+      "paymentStatus": "PAID"
+    },
+    "createdAt": 1782244856353
+  }
+]

@@ -1,0 +1,48 @@
+{
+  "paymentMethods": [
+    {
+      "code": "CASH",
+      "label": "CASH",
+      "color": "var(--organic-green)",
+      "icon": "dollar",
+      "enabled": true
+    },
+    {
+      "code": "UPI",
+      "label": "UPI",
+      "color": "var(--primary-gold)",
+      "icon": "credit-card",
+      "enabled": true
+    },
+    {
+      "code": "BANK",
+      "label": "BANK",
+      "color": "var(--primary-milk)",
+      "icon": "building",
+      "enabled": true
+    },
+    {
+      "code": "PENDING",
+      "label": "PENDING",
+      "color": "var(--alert-red)",
+      "icon": "clock",
+      "enabled": true,
+      "marksPending": true
+    }
+  ],
+  "volumePresets": [
+    0.25,
+    0.5,
+    1,
+    2,
+    5,
+    10
+  ],
+  "allowCustomRate": true,
+  "requireLocation": true,
+  "defaultLocation": "Simulated Location (GPS Locked)",
+  "showStockWarnings": true,
+  "maxVolume": 200,
+  "volumeStep": 0.25,
+  "updatedAt": 1782243856008
+}

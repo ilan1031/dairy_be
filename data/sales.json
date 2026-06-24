@@ -1,0 +1,16 @@
+[
+  {
+    "id": "vncxfvdec",
+    "customerId": "8oko1ck7z",
+    "customerName": "Customer 1",
+    "milkType": "A2 Milk",
+    "liters": 1,
+    "ratePerLiter": 69.8,
+    "totalAmount": 69.8,
+    "paymentStatus": "PAID",
+    "paymentType": "CASH",
+    "location": "Simulated Location (GPS Locked)",
+    "createdAt": 1782244856353,
+    "updatedAt": 1782244856353
+  }
+]
