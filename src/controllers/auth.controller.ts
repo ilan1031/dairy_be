@@ -3,8 +3,12 @@ import {
   decodeAdminCredentials,
   decodeAdminEmail,
   getSessionSecret,
+  SESSION_TOKEN_COOKIE,
+  LOGIN_TOKEN_COOKIE,
+  SUBSCRIPTION_TOKEN_COOKIE,
+  verifyToken,
+  signToken,
   SESSION_COOKIE,
-  signSession,
   verifySessionToken,
 } from '../utils/session';
 import { hashPassword, verifyPassword } from '../utils/password';
@@ -14,6 +18,8 @@ import { seedIfEmpty } from '../services/seed.service';
 import { getSubscriptionStatus } from '../utils/subscription';
 import { stripSensitiveFields } from '../middleware/rbac';
 import type { AuthRequest } from '../middleware/auth';
+import { getTokenConfig } from '../services/tokenConfig.service';
+import type { UserModel } from '../types/models';
 
 function getSessionCookieOptions(req: Request, maxAge?: number) {
   const forwardedProto = req.headers['x-forwarded-proto'];
@@ -33,23 +39,44 @@ function getSessionCookieOptions(req: Request, maxAge?: number) {
   };
 }
 
-function setSessionCookie(
+async function setSessionCookie(
   req: Request,
   res: Response,
   email: string,
-  opts: { userId: string; role: string; isSuperAdmin: boolean }
+  opts: { userId: string; role: string; isSuperAdmin: boolean; subscription?: UserModel['subscription'] }
 ) {
-  const token = signSession(
-    {
-      email,
-      userId: opts.userId,
-      role: opts.role,
-      isSuperAdmin: opts.isSuperAdmin,
-    },
-    getSessionSecret()
-  );
+  const tokenConfig = await getTokenConfig();
 
-  res.cookie(SESSION_COOKIE, token, getSessionCookieOptions(req, 60 * 60 * 8 * 1000));
+  const sessionMaxAge = tokenConfig.sessionExpirySeconds * 1000;
+  const loginMaxAge = tokenConfig.loginExpirySeconds * 1000;
+  const subscriptionMaxAge = tokenConfig.subscriptionExpirySeconds * 1000;
+
+  const sessionToken = signToken({
+    email,
+    userId: opts.userId,
+    role: opts.role,
+    isSuperAdmin: opts.isSuperAdmin
+  }, getSessionSecret());
+
+  const loginToken = signToken({
+    email,
+    userId: opts.userId,
+    role: opts.role
+  }, getSessionSecret());
+
+  const matchedUser = opts.isSuperAdmin ? null : await usersService.getUserById(opts.userId);
+  const subStatus = getSubscriptionStatus(matchedUser, opts.isSuperAdmin);
+
+  const subscriptionToken = signToken({
+    userId: opts.userId,
+    plan: opts.subscription?.plan || matchedUser?.subscription?.plan || 'free',
+    blocked: Boolean(subStatus.blocked),
+    paymentMessage: subStatus.paymentMessage || ''
+  }, getSessionSecret());
+
+  res.cookie(SESSION_TOKEN_COOKIE, sessionToken, getSessionCookieOptions(req, sessionMaxAge));
+  res.cookie(LOGIN_TOKEN_COOKIE, loginToken, getSessionCookieOptions(req, loginMaxAge));
+  res.cookie(SUBSCRIPTION_TOKEN_COOKIE, subscriptionToken, getSessionCookieOptions(req, subscriptionMaxAge));
 }
 
 export async function login(req: Request, res: Response) {
@@ -69,7 +96,7 @@ export async function login(req: Request, res: Response) {
 
       const users = await usersService.getUsers();
       const matched = users.find((u) => u.email === creds.email);
-      setSessionCookie(req, res, creds.email, {
+      await setSessionCookie(req, res, creds.email, {
         userId: matched?.id || 'system',
         role: 'superadmin',
         isSuperAdmin: true,
@@ -94,7 +121,7 @@ export async function login(req: Request, res: Response) {
       return res.status(401).json({ success: false, error: 'Invalid email address or password' });
     }
 
-    setSessionCookie(req, res, user.email, {
+    await setSessionCookie(req, res, user.email, {
       userId: user.id,
       role: user.role,
       isSuperAdmin: false,
@@ -156,7 +183,7 @@ export async function register(req: Request, res: Response) {
       },
     });
 
-    setSessionCookie(req, res, emailAddress, {
+    await setSessionCookie(req, res, emailAddress, {
       userId: user.id,
       role: user.role,
       isSuperAdmin: false,
@@ -171,9 +198,19 @@ export async function register(req: Request, res: Response) {
 
 export async function whoami(req: Request, res: Response) {
   try {
-    const token = req.cookies?.[SESSION_COOKIE];
-    const session = verifySessionToken(token, getSessionSecret());
-    if (!session) {
+    const sessionToken = req.cookies?.[SESSION_TOKEN_COOKIE];
+    const loginToken = req.cookies?.[LOGIN_TOKEN_COOKIE];
+    const subscriptionToken = req.cookies?.[SUBSCRIPTION_TOKEN_COOKIE];
+
+    if (!sessionToken || !loginToken || !subscriptionToken) {
+      return res.json({ authenticated: false });
+    }
+
+    const session = verifySessionToken(sessionToken, getSessionSecret());
+    const login = verifyToken(loginToken, getSessionSecret());
+    const subscription = verifyToken(subscriptionToken, getSessionSecret());
+
+    if (!session || !login || !subscription || session.userId !== login.userId) {
       return res.json({ authenticated: false });
     }
 
@@ -206,7 +243,9 @@ export async function whoami(req: Request, res: Response) {
 }
 
 export async function logout(req: Request, res: Response) {
-  res.clearCookie(SESSION_COOKIE, getSessionCookieOptions(req));
+  res.clearCookie(SESSION_TOKEN_COOKIE, getSessionCookieOptions(req));
+  res.clearCookie(LOGIN_TOKEN_COOKIE, getSessionCookieOptions(req));
+  res.clearCookie(SUBSCRIPTION_TOKEN_COOKIE, getSessionCookieOptions(req));
   return res.json({ success: true });
 }
 

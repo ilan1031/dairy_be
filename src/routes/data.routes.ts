@@ -14,8 +14,10 @@ router.post('/sales/save', requireActiveSubscription, requireAnyPageAction('Sale
 router.post('/sales/delete', requireActiveSubscription, requirePageAction('Sales', 'delete'), dataController.deleteSale);
 router.post('/sales/mark-paid', requireActiveSubscription, requirePageAction('Sales', 'edit'), dataController.markSalePaid);
 router.post('/prices/save', requireActiveSubscription, requirePageAction('Settings', 'edit'), dataController.savePrice);
+router.post('/prices/delete', requireActiveSubscription, requirePageAction('Settings', 'edit'), dataController.deletePrice);
 router.post('/inventory/save', requireActiveSubscription, requireAnyPageAction('Inventory', ['create', 'edit']), dataController.saveInventory);
 router.post('/billing/save', requireActiveSubscription, requirePageAction('Settings', 'edit'), dataController.saveBilling);
+router.post('/branding/save', requireActiveSubscription, requirePageAction('Settings', 'edit'), dataController.saveBranding);
 router.post('/audit/log', dataController.logAudit);
 router.post('/audit/list', requireActiveSubscription, requirePageAction('Settings', 'view'), dataController.listAudit);
 router.post('/import', dataController.importData);

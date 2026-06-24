@@ -2,7 +2,14 @@ import { Request, Response, NextFunction } from 'express';
 import type { PermissionAction, AuthContext, SessionPayload, UserModel } from '../types/models';
 import { userHasPageAction } from './rbac';
 import { getSubscriptionStatus } from '../utils/subscription';
-import { decodeAdminEmail, getSessionSecret, SESSION_COOKIE, verifySessionToken } from '../utils/session';
+import { 
+  decodeAdminEmail, 
+  getSessionSecret, 
+  SESSION_TOKEN_COOKIE, 
+  LOGIN_TOKEN_COOKIE, 
+  SUBSCRIPTION_TOKEN_COOKIE, 
+  verifyToken 
+} from '../utils/session';
 import * as usersService from '../services/users.service';
 
 export interface AuthRequest extends Request {
@@ -11,8 +18,17 @@ export interface AuthRequest extends Request {
 }
 
 export function getSessionFromRequest(req: Request): SessionPayload | null {
-  const token = req.cookies?.[SESSION_COOKIE];
-  return verifySessionToken(token, getSessionSecret());
+  const token = req.cookies?.[SESSION_TOKEN_COOKIE];
+  if (!token) return null;
+  const verified = verifyToken(token, getSessionSecret());
+  if (!verified || !verified.email) return null;
+  return {
+    email: verified.email,
+    userId: verified.userId || verified.email,
+    role: verified.role || 'user',
+    isSuperAdmin: Boolean(verified.isSuperAdmin),
+    ts: verified.ts,
+  };
 }
 
 export async function hydrateAuthContext(req: Request): Promise<AuthContext | null> {
@@ -67,23 +83,69 @@ export async function hydrateAuthContext(req: Request): Promise<AuthContext | nu
 }
 
 export async function requireSession(req: Request, res: Response, next: NextFunction) {
+  const sessionToken = req.cookies?.[SESSION_TOKEN_COOKIE];
+  const loginToken = req.cookies?.[LOGIN_TOKEN_COOKIE];
+  const subscriptionToken = req.cookies?.[SUBSCRIPTION_TOKEN_COOKIE];
+
+  if (!sessionToken || !loginToken || !subscriptionToken) {
+    return res.status(401).json({ success: false, error: 'Unauthorized: Missing token(s)' });
+  }
+
+  const session = verifyToken(sessionToken, getSessionSecret());
+  const login = verifyToken(loginToken, getSessionSecret());
+  const subscription = verifyToken(subscriptionToken, getSessionSecret());
+
+  if (!session || !login || !subscription) {
+    return res.status(401).json({ success: false, error: 'Unauthorized: Invalid token(s)' });
+  }
+
+  if (session.userId !== login.userId) {
+    return res.status(401).json({ success: false, error: 'Unauthorized: Token user mismatch' });
+  }
+
   const auth = await hydrateAuthContext(req);
   if (!auth) {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
   }
-  const session = getSessionFromRequest(req)!;
-  (req as AuthRequest).session = session;
+
+  (req as AuthRequest).session = {
+    email: session.email,
+    userId: session.userId,
+    role: session.role,
+    isSuperAdmin: Boolean(session.isSuperAdmin),
+    ts: session.ts,
+  };
   (req as AuthRequest).auth = auth;
   next();
 }
 
 export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const sessionToken = req.cookies?.[SESSION_TOKEN_COOKIE];
+  const loginToken = req.cookies?.[LOGIN_TOKEN_COOKIE];
+
+  if (!sessionToken || !loginToken) {
+    return res.status(401).json({ success: false, error: 'Unauthorized: Missing token(s)' });
+  }
+
+  const session = verifyToken(sessionToken, getSessionSecret());
+  const login = verifyToken(loginToken, getSessionSecret());
+
+  if (!session || !login) {
+    return res.status(401).json({ success: false, error: 'Unauthorized: Invalid token(s)' });
+  }
+
   const auth = await hydrateAuthContext(req);
   if (!auth?.isSuperAdmin) {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
   }
-  const session = getSessionFromRequest(req)!;
-  (req as AuthRequest).session = session;
+
+  (req as AuthRequest).session = {
+    email: session.email,
+    userId: session.userId,
+    role: session.role,
+    isSuperAdmin: Boolean(session.isSuperAdmin),
+    ts: session.ts,
+  };
   (req as AuthRequest).auth = auth;
   next();
 }
@@ -104,17 +166,20 @@ export function requirePageAction(page: string, action: PermissionAction) {
 }
 
 export function requireActiveSubscription(req: Request, res: Response, next: NextFunction) {
-  const auth = (req as AuthRequest).auth;
-  if (!auth) {
-    return res.status(401).json({ success: false, error: 'Unauthorized' });
-  }
-  const status = getSubscriptionStatus(auth.user, auth.isSuperAdmin);
-  if (status.blocked) {
+  const subscriptionToken = req.cookies?.[SUBSCRIPTION_TOKEN_COOKIE];
+  if (!subscriptionToken) {
     return res.status(402).json({
       success: false,
-      error: status.paymentMessage || 'Subscription expired. Please renew.',
+      error: 'Subscription expired. Please renew.',
       subscriptionBlocked: true,
-      subscriptionStatus: status,
+    });
+  }
+  const subscription = verifyToken(subscriptionToken, getSessionSecret());
+  if (!subscription || subscription.blocked) {
+    return res.status(402).json({
+      success: false,
+      error: subscription?.paymentMessage || 'Subscription expired. Please renew.',
+      subscriptionBlocked: true,
     });
   }
   next();

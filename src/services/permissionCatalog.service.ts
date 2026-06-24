@@ -10,9 +10,21 @@ export async function getPermissionCatalog(): Promise<PermissionCatalog> {
     null
   );
   if (stored?.pages?.length) {
+    const mergedPages = stored.pages.map(spage => {
+      const defPage = DEFAULT_PERMISSION_CATALOG.pages.find(dp => dp.key === spage.key);
+      if (defPage) {
+        const actionsSet = new Set([...spage.actions, ...defPage.actions]);
+        return {
+          ...spage,
+          actions: Array.from(actionsSet)
+        };
+      }
+      return spage;
+    });
     return {
       ...DEFAULT_PERMISSION_CATALOG,
       ...stored,
+      pages: mergedPages,
       fields: { ...DEFAULT_PERMISSION_CATALOG.fields, ...(stored.fields || {}) },
     };
   }

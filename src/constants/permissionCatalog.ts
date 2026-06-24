@@ -1,15 +1,15 @@
 import type { PermissionAction, PermissionCatalog } from '../types/models';
 
-export const DEFAULT_PERMISSION_ACTIONS: PermissionAction[] = ['view', 'create', 'edit', 'delete', 'export'];
+export const DEFAULT_PERMISSION_ACTIONS: PermissionAction[] = ['view', 'create', 'edit', 'delete', 'export', 'share', 'exportAll'];
 
 export const DEFAULT_PERMISSION_CATALOG: PermissionCatalog = {
   pages: [
     { key: 'Dashboard', label: 'Dashboard', actions: ['view', 'export'], tabIndex: 0 },
-    { key: 'Sales', label: 'Sales', actions: ['view', 'create', 'edit', 'delete', 'export'], tabIndex: 1 },
-    { key: 'Bills', label: 'Bills', actions: ['view', 'edit', 'export'], tabIndex: 3 },
+    { key: 'Sales', label: 'Sales', actions: ['view', 'create', 'edit', 'delete', 'export', 'share', 'exportAll'], tabIndex: 1 },
+    { key: 'Bills', label: 'Bills', actions: ['view', 'edit', 'export', 'share', 'exportAll'], tabIndex: 3 },
     { key: 'Inventory', label: 'Inventory', actions: ['view', 'create', 'edit', 'delete'], tabIndex: -1 },
-    { key: 'Profiles', label: 'Profiles', actions: ['view', 'create', 'edit', 'delete', 'export'], tabIndex: 2 },
-    { key: 'Reports', label: 'Reports', actions: ['view', 'export'], tabIndex: 4 },
+    { key: 'Profiles', label: 'Profiles', actions: ['view', 'create', 'edit', 'delete', 'export', 'share'], tabIndex: 2 },
+    { key: 'Reports', label: 'Reports', actions: ['view', 'export', 'share'], tabIndex: 4 },
     { key: 'Settings', label: 'Settings', actions: ['view', 'edit', 'export'], tabIndex: 5 },
   ],
   fields: {

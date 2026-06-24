@@ -1,4 +1,4 @@
-export type PermissionAction = 'view' | 'create' | 'edit' | 'delete' | 'export';
+export type PermissionAction = 'view' | 'create' | 'edit' | 'delete' | 'export' | 'share' | 'exportAll';
 
 export interface CatalogPage {
   key: string;
@@ -123,6 +123,7 @@ export interface Sale {
 export interface PriceConfig {
   milkType: string;
   currentPrice: number;
+  ownerUserId?: string;
   updatedAt: number;
 }
 
@@ -131,6 +132,7 @@ export interface PriceLog {
   milkType: string;
   oldPrice: number;
   newPrice: number;
+  ownerUserId?: string;
   timestamp: number;
 }
 
@@ -162,6 +164,7 @@ export interface BillingConfig {
   showStockWarnings: boolean;
   maxVolume: number;
   volumeStep: number;
+  ownerUserId?: string;
   updatedAt: number;
 }
 
@@ -177,6 +180,15 @@ export interface AuditLogEntry {
   createdAt: number;
 }
 
+export interface BrandingConfig {
+  bankName: string;
+  systemName: string;
+  logo: string;
+  address: string;
+  ownerUserId?: string;
+  updatedAt: number;
+}
+
 export interface BootstrapData {
   profile: Profile | null;
   customers: Customer[];
@@ -186,6 +198,7 @@ export interface BootstrapData {
   inventory: MilkInventory[];
   users: UserModel[];
   billingConfig: BillingConfig | null;
+  brandingConfig: BrandingConfig | null;
   auditLogs: AuditLogEntry[];
   permissionCatalog?: PermissionCatalog;
   sessionUser?: UserModel | null;
@@ -208,4 +221,11 @@ export interface AuthContext {
   role: string;
   isSuperAdmin: boolean;
   user: UserModel | null;
+}
+
+export interface TokenConfig {
+  sessionExpirySeconds: number;
+  loginExpirySeconds: number;
+  subscriptionExpirySeconds: number;
+  updatedAt: number;
 }
