@@ -15,7 +15,26 @@ import { getSubscriptionStatus } from '../utils/subscription';
 import { stripSensitiveFields } from '../middleware/rbac';
 import type { AuthRequest } from '../middleware/auth';
 
+function getSessionCookieOptions(req: Request, maxAge?: number) {
+  const forwardedProto = req.headers['x-forwarded-proto'];
+  const isHttps =
+    req.secure ||
+    (Array.isArray(forwardedProto)
+      ? forwardedProto.includes('https')
+      : forwardedProto === 'https') ||
+    process.env.NODE_ENV === 'production';
+
+  return {
+    httpOnly: true,
+    secure: isHttps,
+    path: '/',
+    sameSite: (isHttps ? 'none' : 'lax') as 'none' | 'lax',
+    ...(maxAge !== undefined ? { maxAge } : {}),
+  };
+}
+
 function setSessionCookie(
+  req: Request,
   res: Response,
   email: string,
   opts: { userId: string; role: string; isSuperAdmin: boolean }
@@ -29,14 +48,8 @@ function setSessionCookie(
     },
     getSessionSecret()
   );
-  const isProd = process.env.NODE_ENV === 'production';
-  res.cookie(SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: isProd,
-    path: '/',
-    sameSite: isProd ? 'none' : 'lax',
-    maxAge: 60 * 60 * 8 * 1000,
-  });
+
+  res.cookie(SESSION_COOKIE, token, getSessionCookieOptions(req, 60 * 60 * 8 * 1000));
 }
 
 export async function login(req: Request, res: Response) {
@@ -56,7 +69,7 @@ export async function login(req: Request, res: Response) {
 
       const users = await usersService.getUsers();
       const matched = users.find((u) => u.email === creds.email);
-      setSessionCookie(res, creds.email, {
+      setSessionCookie(req, res, creds.email, {
         userId: matched?.id || 'system',
         role: 'superadmin',
         isSuperAdmin: true,
@@ -81,7 +94,7 @@ export async function login(req: Request, res: Response) {
       return res.status(401).json({ success: false, error: 'Invalid email address or password' });
     }
 
-    setSessionCookie(res, user.email, {
+    setSessionCookie(req, res, user.email, {
       userId: user.id,
       role: user.role,
       isSuperAdmin: false,
@@ -143,7 +156,7 @@ export async function register(req: Request, res: Response) {
       },
     });
 
-    setSessionCookie(res, emailAddress, {
+    setSessionCookie(req, res, emailAddress, {
       userId: user.id,
       role: user.role,
       isSuperAdmin: false,
@@ -192,13 +205,8 @@ export async function whoami(req: Request, res: Response) {
   }
 }
 
-export async function logout(_req: Request, res: Response) {
-  const isProd = process.env.NODE_ENV === 'production';
-  res.clearCookie(SESSION_COOKIE, {
-    path: '/',
-    secure: isProd,
-    sameSite: isProd ? 'none' : 'lax',
-  });
+export async function logout(req: Request, res: Response) {
+  res.clearCookie(SESSION_COOKIE, getSessionCookieOptions(req));
   return res.json({ success: true });
 }
 
