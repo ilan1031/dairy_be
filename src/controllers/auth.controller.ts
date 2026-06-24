@@ -34,7 +34,7 @@ function setSessionCookie(
     httpOnly: true,
     secure: isProd,
     path: '/',
-    sameSite: 'lax',
+    sameSite: isProd ? 'none' : 'lax',
     maxAge: 60 * 60 * 8 * 1000,
   });
 }
@@ -193,7 +193,12 @@ export async function whoami(req: Request, res: Response) {
 }
 
 export async function logout(_req: Request, res: Response) {
-  res.clearCookie(SESSION_COOKIE, { path: '/' });
+  const isProd = process.env.NODE_ENV === 'production';
+  res.clearCookie(SESSION_COOKIE, {
+    path: '/',
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
+  });
   return res.json({ success: true });
 }
 
