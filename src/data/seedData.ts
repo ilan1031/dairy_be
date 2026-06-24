@@ -1,4 +1,4 @@
-import type { Profile, PriceConfig, UserModel, BillingConfig } from '../types/models';
+import type { Profile, PriceConfig, UserModel, BillingConfig, BrandingConfig } from '../types/models';
 
 const now = Date.now();
 
@@ -56,5 +56,13 @@ export const SEED_BILLING_CONFIG: BillingConfig = {
   showStockWarnings: true,
   maxVolume: 200,
   volumeStep: 0.25,
+  updatedAt: now,
+};
+
+export const SEED_BRANDING_CONFIG: BrandingConfig = {
+  bankName: 'Ganga Premium Dairy',
+  systemName: 'Dairy ERP',
+  logo: '/abielan_app_logo.png',
+  address: '123 Dairy Farm Lane, Cooperative Hub',
   updatedAt: now,
 };

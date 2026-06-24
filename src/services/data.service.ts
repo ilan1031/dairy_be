@@ -8,6 +8,7 @@ import type {
   MilkInventory,
   UserModel,
   BillingConfig,
+  BrandingConfig,
   AuditLogEntry,
 } from '../types/models';
 import {
@@ -18,7 +19,7 @@ import {
   deleteCollectionItem,
 } from './store';
 import { getFirestore, isFirebaseConfigured } from '../config/firebase';
-import { SEED_BILLING_CONFIG } from '../data/seedData';
+import { SEED_BILLING_CONFIG, SEED_PRICE_CONFIGS, SEED_BRANDING_CONFIG } from '../data/seedData';
 import { filterByDataScope, stripSensitiveFields } from '../middleware/rbac';
 import { getPermissionCatalog } from './permissionCatalog.service';
 
@@ -32,45 +33,139 @@ const EMPTY_PROFILE: Profile = {
   language: 'en',
 };
 
-async function getProfileData(): Promise<Profile | null> {
+async function getProfileData(email?: string | null): Promise<Profile | null> {
+  if (!email) return null;
   const db = getFirestore();
   if (isFirebaseConfigured() && db) {
-    const snap = await db.collection('profiles').limit(1).get();
-    if (!snap.empty) return snap.docs[0].data() as Profile;
-    return null;
+    const doc = await db.collection('profiles').doc(email).get();
+    if (doc.exists) return doc.data() as Profile;
+    return {
+      ...EMPTY_PROFILE,
+      emailAddress: email,
+    };
   }
-  return getDocData<Profile | null>('profiles', 'default', 'profile.json', null);
+  const profile = await getDocData<Profile | null>('profiles', email, 'profile.json', null);
+  if (profile) return profile;
+  return {
+    ...EMPTY_PROFILE,
+    emailAddress: email,
+  };
+}
+
+export function getAllowedUserIds(
+  user: UserModel | null | undefined,
+  isSuperAdmin?: boolean,
+  resource?: 'sales' | 'inventory' | 'customers'
+): string[] | null {
+  if (!user || isSuperAdmin || user.role === 'superadmin') return null;
+
+  const scope = user.permissions?.dataAccessScope || { mode: 'own', sharedUserIds: [] };
+  if (scope.mode === 'all') return null;
+
+  const rights = { sales: true, inventory: true, customers: true, ...(scope.sharedRights || {}) };
+  const includeShared = scope.mode === 'shared' && (!resource || rights[resource]);
+
+  if (scope.mode === 'own' || !includeShared) {
+    return [user.id];
+  }
+
+  const ids = [user.id];
+  if (scope.sharedUserIds) {
+    scope.sharedUserIds.forEach((id) => {
+      if (id !== user.id) ids.push(id);
+    });
+  }
+  return ids;
 }
 
 export async function bootstrap(
   sessionUser?: UserModel | null,
   opts?: { isSuperAdmin?: boolean }
 ): Promise<BootstrapData> {
-  const profile = await getProfileData();
+  const profile = await getProfileData(sessionUser?.email);
   const isSuperAdmin = Boolean(opts?.isSuperAdmin);
+
+  const allowedCustomerIds = getAllowedUserIds(sessionUser, isSuperAdmin, 'customers');
+  const allowedSaleIds = getAllowedUserIds(sessionUser, isSuperAdmin, 'sales');
+  const allowedInventoryIds = getAllowedUserIds(sessionUser, isSuperAdmin, 'inventory');
+  const allowedPriceIds = getAllowedUserIds(sessionUser, isSuperAdmin);
+  const allowedAuditIds = getAllowedUserIds(sessionUser, isSuperAdmin);
 
   const [customers, sales, priceConfigs, priceLogs, inventory, users, auditLogs, permissionCatalog] =
     await Promise.all([
-      getCollection<Customer>('customers', 'customers.json', []),
-      getCollection<Sale>('sales', 'sales.json', []),
-      getCollection<PriceConfig>('price_configs', 'prices.json', []),
-      getCollection<PriceLog>('price_logs', 'price_logs.json', []),
-      getCollection<MilkInventory>('milk_inventory', 'inventory.json', []),
+      getCollection<Customer>('customers', 'customers.json', [], allowedCustomerIds),
+      getCollection<Sale>('sales', 'sales.json', [], allowedSaleIds),
+      getCollection<PriceConfig>('price_configs', 'prices.json', [], allowedPriceIds),
+      getCollection<PriceLog>('price_logs', 'price_logs.json', [], allowedPriceIds),
+      getCollection<MilkInventory>('milk_inventory', 'inventory.json', [], allowedInventoryIds),
       getCollection<UserModel>('users', 'users.json', []),
-      getCollection<AuditLogEntry>('audit_logs', 'audit_logs.json', []),
+      getCollection<AuditLogEntry>('audit_logs', 'audit_logs.json', [], allowedAuditIds),
       getPermissionCatalog(),
     ]);
 
-  const billingConfig = await getDocData<BillingConfig>(
+  const billingDocId = sessionUser && !isSuperAdmin ? `billing_${sessionUser.id}` : 'billing';
+  let billingConfig = await getDocData<BillingConfig>(
     'system_config',
-    'billing',
-    'billing.json',
+    billingDocId,
+    billingDocId + '.json',
     SEED_BILLING_CONFIG
   );
+
+  if (sessionUser && !isSuperAdmin && billingDocId !== 'billing') {
+    await setDocData('system_config', billingDocId, billingDocId + '.json', { ...billingConfig, ownerUserId: sessionUser.id });
+    billingConfig = { ...billingConfig, ownerUserId: sessionUser.id };
+  }
+
+  const brandingDocId = sessionUser && !isSuperAdmin ? `branding_${sessionUser.id}` : 'branding';
+  let brandingConfig = await getDocData<BrandingConfig>(
+    'system_config',
+    brandingDocId,
+    brandingDocId + '.json',
+    SEED_BRANDING_CONFIG
+  );
+
+  if (sessionUser && !isSuperAdmin && brandingDocId !== 'branding') {
+    await setDocData('system_config', brandingDocId, brandingDocId + '.json', { ...brandingConfig, ownerUserId: sessionUser.id });
+    brandingConfig = { ...brandingConfig, ownerUserId: sessionUser.id };
+  }
 
   const scopedCustomers = filterByDataScope(customers, sessionUser || null, isSuperAdmin, 'customers');
   const scopedSales = filterByDataScope(sales, sessionUser || null, isSuperAdmin, 'sales');
   const scopedInventory = filterByDataScope(inventory, sessionUser || null, isSuperAdmin, 'inventory');
+
+  let scopedPriceConfigs = filterByDataScope(priceConfigs, sessionUser || null, isSuperAdmin);
+  const scopedPriceLogs = filterByDataScope(priceLogs, sessionUser || null, isSuperAdmin);
+
+  if (sessionUser && !isSuperAdmin && scopedPriceConfigs.length === 0) {
+    const now = Date.now();
+    scopedPriceConfigs = SEED_PRICE_CONFIGS.map((pc) => ({
+      ...pc,
+      ownerUserId: sessionUser.id,
+      updatedAt: now,
+    }));
+    for (const pc of scopedPriceConfigs) {
+      await setCollectionItem(
+        'price_configs',
+        'prices.json',
+        `${pc.milkType}_${sessionUser.id}`,
+        pc as unknown as Record<string, unknown>
+      );
+    }
+  }
+
+  // Deduplicate and filter price configs to prevent duplicate keys in UI
+  let finalPriceConfigs = scopedPriceConfigs;
+  if (isSuperAdmin && !sessionUser) {
+    finalPriceConfigs = scopedPriceConfigs.filter((p) => !p.ownerUserId || p.ownerUserId === 'system');
+  } else {
+    const userOwnedConfigs = scopedPriceConfigs.filter((p) => !!p.ownerUserId);
+    const userOwnedMilkTypes = new Set(userOwnedConfigs.map((p) => p.milkType));
+    if (userOwnedConfigs.length > 0) {
+      finalPriceConfigs = scopedPriceConfigs.filter(
+        (p) => !!p.ownerUserId || !userOwnedMilkTypes.has(p.milkType)
+      );
+    }
+  }
 
   const safeUsers = users.map((u) => stripSensitiveFields(u as unknown as Record<string, unknown>));
 
@@ -78,11 +173,12 @@ export async function bootstrap(
     profile: profile || null,
     customers: scopedCustomers.sort((a, b) => a.name.localeCompare(b.name)),
     sales: scopedSales.sort((a, b) => b.createdAt - a.createdAt),
-    priceConfigs,
-    priceLogs: priceLogs.sort((a, b) => b.timestamp - a.timestamp),
+    priceConfigs: finalPriceConfigs,
+    priceLogs: scopedPriceLogs.sort((a, b) => b.timestamp - a.timestamp),
     inventory: scopedInventory,
     users: safeUsers,
     billingConfig,
+    brandingConfig,
     auditLogs: auditLogs.sort((a, b) => b.createdAt - a.createdAt).slice(0, 500),
     permissionCatalog,
     sessionUser: sessionUser || null,
@@ -129,32 +225,64 @@ export async function markSalePaid(id: string, paymentType: string) {
   return updated;
 }
 
-export async function savePriceConfig(milkType: string, newPrice: number) {
+export async function savePriceConfig(milkType: string, newPrice: number, ownerUserId?: string) {
   const configs = await getCollection<PriceConfig>('price_configs', 'prices.json', []);
-  const idx = configs.findIndex((p) => p.milkType === milkType);
+  const idx = configs.findIndex((p) => p.milkType === milkType && (!ownerUserId || p.ownerUserId === ownerUserId));
   const oldPrice = idx !== -1 ? configs[idx].currentPrice : 40;
-  const updatedPrice: PriceConfig = { milkType, currentPrice: newPrice, updatedAt: Date.now() };
-  await setCollectionItem('price_configs', 'prices.json', milkType, updatedPrice as unknown as Record<string, unknown>);
+  const updatedPrice: PriceConfig = { milkType, currentPrice: newPrice, ownerUserId, updatedAt: Date.now() };
+  const docId = ownerUserId ? `${milkType}_${ownerUserId}` : milkType;
+  await setCollectionItem('price_configs', 'prices.json', docId, updatedPrice as unknown as Record<string, unknown>);
 
   const log: PriceLog = {
     id: `plog_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     milkType,
     oldPrice,
     newPrice,
+    ownerUserId,
     timestamp: Date.now(),
   };
   await setCollectionItem('price_logs', 'price_logs.json', log.id, log as unknown as Record<string, unknown>);
   return { updatedPrice, log };
 }
 
+export async function deletePriceConfig(milkType: string, ownerUserId?: string) {
+  const docId = ownerUserId ? `${milkType}_${ownerUserId}` : milkType;
+  await deleteCollectionItem('price_configs', 'prices.json', docId);
+}
+
+export async function renamePriceConfig(oldMilkType: string, newMilkType: string, ownerUserId?: string) {
+  const docIdOld = ownerUserId ? `${oldMilkType}_${ownerUserId}` : oldMilkType;
+  const docIdNew = ownerUserId ? `${newMilkType}_${ownerUserId}` : newMilkType;
+
+  const configs = await getCollection<PriceConfig>('price_configs', 'prices.json', []);
+  const matched = configs.find((p) => p.milkType === oldMilkType && (!ownerUserId || p.ownerUserId === ownerUserId));
+  const currentPrice = matched ? matched.currentPrice : 40;
+
+  await deleteCollectionItem('price_configs', 'prices.json', docIdOld);
+
+  const updatedPrice: PriceConfig = { milkType: newMilkType, currentPrice, ownerUserId, updatedAt: Date.now() };
+  await setCollectionItem('price_configs', 'prices.json', docIdNew, updatedPrice as unknown as Record<string, unknown>);
+  return updatedPrice;
+}
+
 export async function saveMilkInventory(inventory: MilkInventory) {
-  await setCollectionItem('milk_inventory', 'inventory.json', inventory.dateStr, inventory as unknown as Record<string, unknown>);
+  const docId = inventory.ownerUserId ? `${inventory.dateStr}_${inventory.ownerUserId}` : inventory.dateStr;
+  await setCollectionItem('milk_inventory', 'inventory.json', docId, inventory as unknown as Record<string, unknown>);
   return inventory;
 }
 
-export async function saveBillingConfig(config: BillingConfig) {
-  await setDocData('system_config', 'billing', 'billing.json', config);
-  return config;
+export async function saveBillingConfig(config: BillingConfig, ownerUserId?: string) {
+  const docId = ownerUserId ? `billing_${ownerUserId}` : 'billing';
+  const updated = { ...config, ownerUserId };
+  await setDocData('system_config', docId, docId + '.json', updated);
+  return updated;
+}
+
+export async function saveBrandingConfig(config: BrandingConfig, ownerUserId?: string) {
+  const docId = ownerUserId ? `branding_${ownerUserId}` : 'branding';
+  const updated = { ...config, ownerUserId, updatedAt: Date.now() };
+  await setDocData('system_config', docId, docId + '.json', updated);
+  return updated;
 }
 
 export async function appendAuditLog(entry: AuditLogEntry) {
@@ -162,8 +290,8 @@ export async function appendAuditLog(entry: AuditLogEntry) {
   return entry;
 }
 
-export async function getAuditLogs(options?: { page?: number; limit?: number; search?: string; resourceType?: string }) {
-  let logs = await getCollection<AuditLogEntry>('audit_logs', 'audit_logs.json', []);
+export async function getAuditLogs(options?: { page?: number; limit?: number; search?: string; resourceType?: string; allowedUserIds?: string[] | null }) {
+  let logs = await getCollection<AuditLogEntry>('audit_logs', 'audit_logs.json', [], options?.allowedUserIds);
   logs.sort((a, b) => b.createdAt - a.createdAt);
 
   if (options?.resourceType) {

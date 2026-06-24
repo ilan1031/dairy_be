@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import * as admin from 'firebase-admin';
 import { getFirestore, isFirebaseConfigured } from '../config/firebase';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -63,14 +64,46 @@ export async function setDocData(collection: string, docId: string, jsonFile: st
 export async function getCollection<T>(
   firestoreCollection: string,
   jsonFile: string,
-  defaultVal: T[] = []
+  defaultVal: T[] = [],
+  allowedUserIds?: string[] | null
 ): Promise<T[]> {
   const db = getFirestore();
   if (isFirebaseConfigured() && db) {
-    const snap = await db.collection(firestoreCollection).get();
-    return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as T);
+    let query: admin.firestore.Query = db.collection(firestoreCollection);
+    if (allowedUserIds && allowedUserIds.length > 0) {
+      if (firestoreCollection.startsWith('audit_logs')) {
+        if (allowedUserIds.length === 1) {
+          query = query.where('userId', '==', allowedUserIds[0]);
+        } else {
+          query = query.where('userId', 'in', allowedUserIds.slice(0, 30));
+        }
+      } else {
+        const filterCollections = ['customers', 'sales', 'price_configs', 'price_logs', 'milk_inventory', 'billing'];
+        if (filterCollections.some(c => firestoreCollection.startsWith(c))) {
+          if (allowedUserIds.length === 1) {
+            query = query.where('ownerUserId', '==', allowedUserIds[0]);
+          } else {
+            query = query.where('ownerUserId', 'in', allowedUserIds.slice(0, 30));
+          }
+        }
+      }
+    }
+    const snap = await query.get();
+    return snap.docs.map((d: any) => ({ id: d.id, ...d.data() }) as T);
   }
-  return readJson(jsonFile, defaultVal);
+  const all = await readJson(jsonFile, defaultVal);
+  if (allowedUserIds && allowedUserIds.length > 0) {
+    const allowedSet = new Set(allowedUserIds);
+    if (firestoreCollection.startsWith('audit_logs')) {
+      return all.filter((x: any) => !x.userId || allowedSet.has(x.userId));
+    } else {
+      const filterCollections = ['customers', 'sales', 'price_configs', 'price_logs', 'milk_inventory', 'billing'];
+      if (filterCollections.some(c => firestoreCollection.startsWith(c))) {
+        return all.filter((x: any) => !x.ownerUserId || allowedSet.has(x.ownerUserId));
+      }
+    }
+  }
+  return all;
 }
 
 export async function setCollectionItem<T extends Record<string, unknown>>(

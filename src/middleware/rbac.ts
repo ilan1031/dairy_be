@@ -6,6 +6,8 @@ const ACTION_TO_LEGACY: Record<PermissionAction, keyof PermissionSet | null> = {
   edit: 'canUpdate',
   delete: 'canDelete',
   export: 'canRead',
+  share: 'canRead',
+  exportAll: 'canRead',
 };
 
 const DEFAULT_SHARED_RIGHTS: SharedAccessRights = {
