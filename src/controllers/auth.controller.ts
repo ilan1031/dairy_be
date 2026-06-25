@@ -89,10 +89,16 @@ export async function login(req: Request, res: Response) {
     const creds = decodeAdminCredentials();
     if (creds && email === creds.email && password === creds.password) {
       await seedIfEmpty();
-      const boot = await dataService.bootstrap(null, { isSuperAdmin: true });
-      if (!boot.profile) {
-        return res.status(500).json({ success: false, error: 'Business profile not found.' });
-      }
+      const boot = await dataService.bootstrap({ email: creds.email } as UserModel, { isSuperAdmin: true });
+      const profile = boot.profile || {
+        businessName: '',
+        ownerName: '',
+        mobileNumber: '',
+        emailAddress: creds.email,
+        signupTimestamp: Date.now(),
+        isLightTheme: true,
+        language: 'en',
+      };
 
       const users = await usersService.getUsers();
       const matched = users.find((u) => u.email === creds.email);
@@ -104,7 +110,7 @@ export async function login(req: Request, res: Response) {
 
       return res.json({
         success: true,
-        profile: boot.profile,
+        profile,
         user: matched || null,
         isSuperAdmin: true,
       });
