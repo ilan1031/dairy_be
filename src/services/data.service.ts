@@ -22,6 +22,7 @@ import { getFirestore, isFirebaseConfigured } from '../config/firebase';
 import { SEED_BILLING_CONFIG, SEED_PRICE_CONFIGS, SEED_BRANDING_CONFIG } from '../data/seedData';
 import { filterByDataScope, stripSensitiveFields } from '../middleware/rbac';
 import { getPermissionCatalog } from './permissionCatalog.service';
+import { decodeAdminEmail } from '../utils/session';
 
 const EMPTY_PROFILE: Profile = {
   businessName: '',
@@ -33,22 +34,22 @@ const EMPTY_PROFILE: Profile = {
   language: 'en',
 };
 
-async function getProfileData(email?: string | null): Promise<Profile | null> {
-  if (!email) return null;
+async function getProfileData(email?: string | null): Promise<Profile> {
+  const resolvedEmail = email || decodeAdminEmail() || 'default';
   const db = getFirestore();
   if (isFirebaseConfigured() && db) {
-    const doc = await db.collection('profiles').doc(email).get();
+    const doc = await db.collection('profiles').doc(resolvedEmail).get();
     if (doc.exists) return doc.data() as Profile;
     return {
       ...EMPTY_PROFILE,
-      emailAddress: email,
+      emailAddress: resolvedEmail,
     };
   }
-  const profile = await getDocData<Profile | null>('profiles', email, 'profile.json', null);
+  const profile = await getDocData<Profile | null>('profiles', resolvedEmail, 'profile.json', null);
   if (profile) return profile;
   return {
     ...EMPTY_PROFILE,
-    emailAddress: email,
+    emailAddress: resolvedEmail,
   };
 }
 
