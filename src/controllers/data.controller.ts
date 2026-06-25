@@ -209,13 +209,32 @@ export async function saveBranding(req: Request, res: Response) {
   }
 }
 
+function getClientIp(req: Request): string {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  const candidates = [
+    req.ip,
+    Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor,
+    req.headers['x-real-ip'],
+    req.headers['cf-connecting-ip'],
+    (req.socket as { remoteAddress?: string } | undefined)?.remoteAddress,
+  ].filter((value): value is string => Boolean(value));
+
+  if (candidates.length === 0) return 'unknown';
+  return candidates[0].split(',')[0].trim() || 'unknown';
+}
+
 export async function logAudit(req: Request, res: Response) {
   try {
     const auth = (req as AuthRequest).auth;
+    const ipAddress = getClientIp(req);
     const entry = {
       ...req.body,
       userId: req.body.userId || auth?.userId || 'session',
       userEmail: req.body.userEmail || auth?.email,
+      details: {
+        ...(req.body.details || {}),
+        ipAddress,
+      },
     };
     const saved = await dataService.appendAuditLog(entry);
     return res.json({ success: true, data: saved });

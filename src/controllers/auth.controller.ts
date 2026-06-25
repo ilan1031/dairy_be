@@ -19,7 +19,8 @@ import { getSubscriptionStatus } from '../utils/subscription';
 import { stripSensitiveFields } from '../middleware/rbac';
 import type { AuthRequest } from '../middleware/auth';
 import { getTokenConfig } from '../services/tokenConfig.service';
-import type { UserModel } from '../types/models';
+import * as ipLimitService from '../services/ipLimit.service';
+import type { AuditLogEntry, UserModel } from '../types/models';
 
 function getSessionCookieOptions(req: Request, maxAge?: number) {
   const forwardedProto = req.headers['x-forwarded-proto'];
@@ -37,6 +38,37 @@ function getSessionCookieOptions(req: Request, maxAge?: number) {
     sameSite: (isHttps ? 'none' : 'lax') as 'none' | 'lax',
     ...(maxAge !== undefined ? { maxAge } : {}),
   };
+}
+
+function getClientIp(req: Request): string {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  const candidates = [
+    req.ip,
+    Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor,
+    req.headers['x-real-ip'],
+    req.headers['cf-connecting-ip'],
+    (req.socket as { remoteAddress?: string } | undefined)?.remoteAddress,
+  ].filter((value): value is string => Boolean(value));
+
+  if (candidates.length === 0) return 'unknown';
+
+  const first = candidates[0].split(',')[0].trim();
+  return first || 'unknown';
+}
+
+async function appendAuthAudit(
+  req: Request,
+  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { details?: Record<string, unknown> | null; resourceType?: string }
+) {
+  const auditEntry: AuditLogEntry = {
+    id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: Date.now(),
+    ...entry,
+    resourceType: entry.resourceType || 'auth',
+  };
+
+  await dataService.appendAuditLog(auditEntry);
+  return auditEntry;
 }
 
 async function setSessionCookie(
@@ -82,12 +114,15 @@ async function setSessionCookie(
 export async function login(req: Request, res: Response) {
   try {
     const { email, password } = req.body;
-    if (!email || !password) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const ipAddress = getClientIp(req);
+
+    if (!normalizedEmail || !password) {
       return res.status(400).json({ success: false, error: 'Email and password required' });
     }
 
     const creds = decodeAdminCredentials();
-    if (creds && email === creds.email && password === creds.password) {
+    if (creds && normalizedEmail === creds.email.toLowerCase() && password === creds.password) {
       await seedIfEmpty();
       const boot = await dataService.bootstrap({ email: creds.email } as UserModel, { isSuperAdmin: true });
       const profile = boot.profile || {
@@ -107,6 +142,15 @@ export async function login(req: Request, res: Response) {
         role: 'superadmin',
         isSuperAdmin: true,
       });
+      await appendAuthAudit(req, {
+        userId: matched?.id || 'system',
+        userName: matched?.name || 'System Admin',
+        userEmail: creds.email,
+        action: 'login_success',
+        resourceType: 'auth',
+        details: { ipAddress, source: 'admin' },
+        resourceId: matched?.id || 'system',
+      });
 
       return res.json({
         success: true,
@@ -116,14 +160,41 @@ export async function login(req: Request, res: Response) {
       });
     }
 
-    const user = await usersService.getUserByEmail(email);
+    const user = await usersService.getUserByEmail(normalizedEmail);
     if (!user || !user.passwordHash) {
+      await appendAuthAudit(req, {
+        userId: 'unknown',
+        userName: normalizedEmail || 'unknown',
+        userEmail: normalizedEmail || undefined,
+        action: 'login_failed',
+        resourceType: 'auth',
+        details: { ipAddress, reason: 'invalid_credentials', email: normalizedEmail },
+        resourceId: normalizedEmail || 'unknown',
+      });
       return res.status(401).json({ success: false, error: 'Invalid email address or password' });
     }
     if (!user.active) {
+      await appendAuthAudit(req, {
+        userId: user.id,
+        userName: user.name || normalizedEmail,
+        userEmail: user.email,
+        action: 'login_failed',
+        resourceType: 'auth',
+        details: { ipAddress, reason: 'account_inactive' },
+        resourceId: user.id,
+      });
       return res.status(403).json({ success: false, error: 'Account is inactive' });
     }
     if (!verifyPassword(password, user.passwordHash)) {
+      await appendAuthAudit(req, {
+        userId: user.id,
+        userName: user.name || normalizedEmail,
+        userEmail: user.email,
+        action: 'login_failed',
+        resourceType: 'auth',
+        details: { ipAddress, reason: 'invalid_credentials' },
+        resourceId: user.id,
+      });
       return res.status(401).json({ success: false, error: 'Invalid email address or password' });
     }
 
@@ -131,6 +202,16 @@ export async function login(req: Request, res: Response) {
       userId: user.id,
       role: user.role,
       isSuperAdmin: false,
+    });
+
+    await appendAuthAudit(req, {
+      userId: user.id,
+      userName: user.name || normalizedEmail,
+      userEmail: user.email,
+      action: 'login_success',
+      resourceType: 'auth',
+      details: { ipAddress, source: 'user' },
+      resourceId: user.id,
     });
 
     const safeUser = stripSensitiveFields(user as unknown as Record<string, unknown>);
@@ -149,15 +230,63 @@ export async function login(req: Request, res: Response) {
 export async function register(req: Request, res: Response) {
   try {
     const { businessName, ownerName, mobileNumber, emailAddress, password } = req.body;
-    if (!businessName || !ownerName || !mobileNumber || !emailAddress || !password) {
+    const normalizedEmail = String(emailAddress || '').trim().toLowerCase();
+    const normalizedMobile = String(mobileNumber || '').trim();
+    const ipAddress = getClientIp(req);
+
+    if (!businessName || !ownerName || !normalizedMobile || !normalizedEmail || !password) {
       return res.status(400).json({ success: false, error: 'All registration fields are required' });
+    }
+
+    const existingUser = await usersService.getUserByEmail(normalizedEmail);
+    if (existingUser) {
+      await appendAuthAudit(req, {
+        userId: existingUser.id,
+        userName: existingUser.name || ownerName || normalizedEmail,
+        userEmail: normalizedEmail,
+        action: 'signup_failed',
+        resourceType: 'auth',
+        details: { ipAddress, reason: 'email_already_registered', emailAddress: normalizedEmail },
+        resourceId: existingUser.id,
+      });
+      return res.status(409).json({ success: false, error: 'Email already registered' });
+    }
+
+    const users = await usersService.getUsers();
+    const duplicateMobile = users.find((u) => String(u.profile?.phone || '').trim() === normalizedMobile);
+    if (duplicateMobile) {
+      await appendAuthAudit(req, {
+        userId: duplicateMobile.id,
+        userName: duplicateMobile.name || ownerName || normalizedEmail,
+        userEmail: normalizedEmail,
+        action: 'signup_failed',
+        resourceType: 'auth',
+        details: { ipAddress, reason: 'mobile_already_registered', mobileNumber: normalizedMobile },
+        resourceId: duplicateMobile.id,
+      });
+      return res.status(409).json({ success: false, error: 'Mobile number already registered' });
+    }
+
+    const currentUsage = await ipLimitService.getIpCreationUsage(ipAddress);
+    const limitCheck = await ipLimitService.canCreateUserFromIp(ipAddress, currentUsage);
+    if (!limitCheck.allowed) {
+      await appendAuthAudit(req, {
+        userId: 'ip_limit',
+        userName: ownerName,
+        userEmail: normalizedEmail,
+        action: 'signup_failed',
+        resourceType: 'auth',
+        details: { ipAddress, reason: 'ip_limit_exceeded', limit: limitCheck.limit, currentCount: limitCheck.currentCount },
+        resourceId: 'ip_limit',
+      });
+      return res.status(429).json({ success: false, error: `Too many users from this IP. Limit is ${limitCheck.limit}.` });
     }
 
     const profile = await dataService.saveProfile({
       businessName,
       ownerName,
-      mobileNumber,
-      emailAddress,
+      mobileNumber: normalizedMobile,
+      emailAddress: normalizedEmail,
       signupTimestamp: Date.now(),
       isLightTheme: true,
       language: 'en',
@@ -165,11 +294,11 @@ export async function register(req: Request, res: Response) {
 
     const user = await usersService.saveUser({
       name: ownerName,
-      email: emailAddress,
+      email: normalizedEmail,
       role: 'user',
       active: true,
       passwordHash: hashPassword(password),
-      profile: { displayName: ownerName, phone: mobileNumber },
+      profile: { displayName: ownerName, phone: normalizedMobile },
       permissions: {
         canCreate: true,
         canRead: true,
@@ -189,10 +318,22 @@ export async function register(req: Request, res: Response) {
       },
     });
 
-    await setSessionCookie(req, res, emailAddress, {
+    await ipLimitService.incrementIpCreationUsage(ipAddress);
+
+    await setSessionCookie(req, res, normalizedEmail, {
       userId: user.id,
       role: user.role,
       isSuperAdmin: false,
+    });
+
+    await appendAuthAudit(req, {
+      userId: user.id,
+      userName: ownerName,
+      userEmail: normalizedEmail,
+      action: 'signup_success',
+      resourceType: 'auth',
+      details: { ipAddress, businessName, mobileNumber: normalizedMobile },
+      resourceId: user.id,
     });
 
     return res.json({ success: true, profile, user, isSuperAdmin: false });
