@@ -170,6 +170,13 @@ export async function bootstrap(
 
   const safeUsers = users.map((u) => stripSensitiveFields(u as unknown as Record<string, unknown>));
 
+  let finalUsers = safeUsers;
+  const allowedUserIdsForList = getAllowedUserIds(sessionUser, isSuperAdmin);
+  if (allowedUserIdsForList) {
+    const allowedSet = new Set(allowedUserIdsForList);
+    finalUsers = safeUsers.filter((u) => allowedSet.has(u.id) || u.id === 'builtin-admin');
+  }
+
   return {
     profile: profile || null,
     customers: scopedCustomers.sort((a, b) => a.name.localeCompare(b.name)),
@@ -177,7 +184,7 @@ export async function bootstrap(
     priceConfigs: finalPriceConfigs,
     priceLogs: scopedPriceLogs.sort((a, b) => b.timestamp - a.timestamp),
     inventory: scopedInventory,
-    users: safeUsers,
+    users: finalUsers,
     billingConfig,
     brandingConfig,
     auditLogs: auditLogs.sort((a, b) => b.createdAt - a.createdAt).slice(0, 500),
