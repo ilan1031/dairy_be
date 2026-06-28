@@ -20,15 +20,26 @@ export async function bootstrap(req: Request, res: Response) {
     let targetUser = auth?.user || null;
     let isSuperAdmin = auth?.isSuperAdmin;
 
-    if (auth?.isSuperAdmin && selectedUserId) {
+    const isSuperAdminUser = auth?.isSuperAdmin || auth?.user?.role === 'superadmin';
+    const canSwitch = isSuperAdminUser || 
+                      auth?.user?.permissions?.canViewOthers || 
+                      auth?.user?.permissions?.dataAccessScope?.mode === 'all' || 
+                      auth?.user?.permissions?.dataAccessScope?.mode === 'shared';
+
+    if (canSwitch && selectedUserId) {
       if (selectedUserId === 'all') {
-        targetUser = null;
-        isSuperAdmin = true;
+        if (isSuperAdminUser || auth?.user?.permissions?.dataAccessScope?.mode === 'all') {
+          targetUser = null;
+          isSuperAdmin = true;
+        }
       } else {
-        const user = await usersService.getUserById(selectedUserId);
-        if (user) {
-          targetUser = user;
-          isSuperAdmin = false;
+        const allowedIds = dataService.getAllowedUserIds(auth?.user, auth?.isSuperAdmin);
+        if (isSuperAdminUser || !allowedIds || allowedIds.includes(selectedUserId)) {
+          const user = await usersService.getUserById(selectedUserId);
+          if (user) {
+            targetUser = user;
+            isSuperAdmin = false;
+          }
         }
       }
     }
