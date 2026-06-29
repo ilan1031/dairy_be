@@ -7,6 +7,7 @@ const router = express.Router();
 router.use(requireSession);
 
 router.post('/bootstrap', requirePageAction('Dashboard', 'view'), dataController.bootstrap);
+router.post('/users/list', requireSession, dataController.listUsersForScope);
 router.post('/profile/save', requireActiveSubscription, requirePageAction('Settings', 'edit'), dataController.saveProfile);
 router.post('/customers/save', requireActiveSubscription, requireAnyPageAction('Profiles', ['create', 'edit']), dataController.saveCustomer);
 router.post('/customers/delete', requireActiveSubscription, requirePageAction('Profiles', 'delete'), dataController.deleteCustomer);
