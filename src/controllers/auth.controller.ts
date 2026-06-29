@@ -20,7 +20,7 @@ import { stripSensitiveFields } from '../middleware/rbac';
 import type { AuthRequest } from '../middleware/auth';
 import { getTokenConfig } from '../services/tokenConfig.service';
 import * as ipLimitService from '../services/ipLimit.service';
-import type { AuditLogEntry, UserModel } from '../types/models';
+import type { AuditLogEntry, PermissionSet, TokenConfig, UserModel } from '../types/models';
 
 function getSessionCookieOptions(req: Request, maxAge?: number) {
   const forwardedProto = req.headers['x-forwarded-proto'];
@@ -111,6 +111,41 @@ async function setSessionCookie(
   res.cookie(SUBSCRIPTION_TOKEN_COOKIE, subscriptionToken, getSessionCookieOptions(req, subscriptionMaxAge));
 }
 
+function buildSignupPermissions(config?: TokenConfig['signupDefaults']): PermissionSet {
+  const defaultPermissions: PermissionSet = {
+    canCreate: true,
+    canRead: true,
+    canUpdate: true,
+    canDelete: false,
+    allowedPages: ['Dashboard', 'Sales', 'Bills', 'Profiles', 'Settings'],
+    canUseSubscription: false,
+    canViewOthers: false,
+    pagePermissions: {
+      Dashboard: ['view'],
+      Sales: ['view', 'create', 'edit'],
+      Bills: ['view', 'edit'],
+      Profiles: ['view', 'create', 'edit'],
+      Settings: ['view', 'edit'],
+    },
+    fieldPermissions: {},
+    dataAccessScope: { mode: 'own', sharedUserIds: [] },
+    resourceLimits: {},
+  };
+  if (!config?.permissions) return defaultPermissions;
+
+  return {
+    ...defaultPermissions,
+    ...config.permissions,
+    allowedPages: Array.isArray(config.permissions.allowedPages)
+      ? config.permissions.allowedPages
+      : defaultPermissions.allowedPages,
+    pagePermissions: config.permissions.pagePermissions || defaultPermissions.pagePermissions,
+    fieldPermissions: config.permissions.fieldPermissions || defaultPermissions.fieldPermissions,
+    dataAccessScope: config.permissions.dataAccessScope || defaultPermissions.dataAccessScope,
+    canUseSubscription: config.permissions.canUseSubscription ?? Boolean(config.subscription?.enabled),
+  };
+}
+
 export async function login(req: Request, res: Response) {
   try {
     const { email, password } = req.body;
@@ -185,6 +220,21 @@ export async function login(req: Request, res: Response) {
       });
       return res.status(403).json({ success: false, error: 'Account is inactive' });
     }
+
+    const tokenConfig = await getTokenConfig();
+    if (tokenConfig.allowLogin === false) {
+      await appendAuthAudit(req, {
+        userId: user.id,
+        userName: user.name || normalizedEmail,
+        userEmail: user.email,
+        action: 'login_failed',
+        resourceType: 'auth',
+        details: { ipAddress, reason: 'login_disabled' },
+        resourceId: user.id,
+      });
+      return res.status(403).json({ success: false, error: 'Sign-in is currently disabled by admin' });
+    }
+
     if (!verifyPassword(password, user.passwordHash)) {
       await appendAuthAudit(req, {
         userId: user.id,
@@ -282,6 +332,20 @@ export async function register(req: Request, res: Response) {
       return res.status(429).json({ success: false, error: `Too many users from this IP. Limit is ${limitCheck.limit}.` });
     }
 
+    const tokenConfig = await getTokenConfig();
+    if (tokenConfig.allowRegistration === false) {
+      await appendAuthAudit(req, {
+        userId: 'unknown',
+        userName: ownerName || normalizedEmail,
+        userEmail: normalizedEmail,
+        action: 'signup_failed',
+        resourceType: 'auth',
+        details: { ipAddress, reason: 'registration_disabled' },
+        resourceId: 'registration_policy',
+      });
+      return res.status(403).json({ success: false, error: 'Registration is currently disabled by admin' });
+    }
+
     const profile = await dataService.saveProfile({
       businessName,
       ownerName,
@@ -292,6 +356,20 @@ export async function register(req: Request, res: Response) {
       language: 'en',
     });
 
+    const signupDefaults = tokenConfig.signupDefaults || {};
+    const signupPermissions = buildSignupPermissions(signupDefaults);
+    const signupSubscription = signupDefaults.subscription || {};
+    let subscription: UserModel['subscription'] | null = null;
+    if (signupPermissions.canUseSubscription || signupSubscription.enabled) {
+      subscription = {
+        plan: signupSubscription.plan || 'premium',
+        paymentMessage: signupSubscription.paymentMessage || undefined,
+      };
+      if (signupSubscription.expiresInDays && Number(signupSubscription.expiresInDays) > 0) {
+        subscription.expiresAt = Date.now() + Number(signupSubscription.expiresInDays) * 24 * 3600 * 1000;
+      }
+    }
+
     const user = await usersService.saveUser({
       name: ownerName,
       email: normalizedEmail,
@@ -299,32 +377,20 @@ export async function register(req: Request, res: Response) {
       active: true,
       passwordHash: hashPassword(password),
       profile: { displayName: ownerName, phone: normalizedMobile },
-      permissions: {
-        canCreate: true,
-        canRead: true,
-        canUpdate: true,
-        canDelete: false,
-        allowedPages: ['Dashboard', 'Sales', 'Bills', 'Profiles', 'Settings'],
-        canUseSubscription: false,
-        canViewOthers: false,
-        pagePermissions: {
-          Dashboard: ['view'],
-          Sales: ['view', 'create', 'edit'],
-          Bills: ['view', 'edit'],
-          Profiles: ['view', 'create', 'edit'],
-          Settings: ['view', 'edit'],
-        },
-        dataAccessScope: { mode: 'own', sharedUserIds: [] },
-      },
+      permissions: signupPermissions,
+      subscription,
     });
 
     await ipLimitService.incrementIpCreationUsage(ipAddress);
 
-    await setSessionCookie(req, res, normalizedEmail, {
-      userId: user.id,
-      role: user.role,
-      isSuperAdmin: false,
-    });
+    const signInAllowed = tokenConfig.allowLogin !== false;
+    if (signInAllowed) {
+      await setSessionCookie(req, res, normalizedEmail, {
+        userId: user.id,
+        role: user.role,
+        isSuperAdmin: false,
+      });
+    }
 
     await appendAuthAudit(req, {
       userId: user.id,
@@ -332,11 +398,11 @@ export async function register(req: Request, res: Response) {
       userEmail: normalizedEmail,
       action: 'signup_success',
       resourceType: 'auth',
-      details: { ipAddress, businessName, mobileNumber: normalizedMobile },
+      details: { ipAddress, businessName, mobileNumber: normalizedMobile, signInAllowed },
       resourceId: user.id,
     });
 
-    return res.json({ success: true, profile, user, isSuperAdmin: false });
+    return res.json({ success: true, profile, user, isSuperAdmin: false, loginBlocked: !signInAllowed });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Registration failed';
     return res.status(500).json({ success: false, error: message });

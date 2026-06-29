@@ -28,7 +28,7 @@ const DEFAULT_PERMISSIONS: PermissionSet = {
 
   allowedPages: ['Dashboard'],
 
-  canUseSubscription: false,
+  canUseSubscription: true,
 
   canViewOthers: false,
 
