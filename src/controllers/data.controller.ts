@@ -290,3 +290,18 @@ export async function importData(req: Request, res: Response) {
     return res.status(500).json({ success: false, error: message });
   }
 }
+
+export async function listUsersForScope(req: Request, res: Response) {
+  try {
+    await seedIfEmpty();
+    const auth = (req as AuthRequest).auth;
+
+    // Use the logged-in session user's credentials to bootstrap/retrieve the allowed users list.
+    // This ignores any client-supplied selectedUserId filter so that the dropdown remains populated.
+    const data = await dataService.bootstrap(auth?.user || null, { isSuperAdmin: auth?.isSuperAdmin });
+    return res.json({ success: true, data: data.users || [] });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to list users';
+    return res.status(500).json({ success: false, error: message });
+  }
+}
