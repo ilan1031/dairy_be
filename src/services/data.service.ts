@@ -104,6 +104,16 @@ export async function bootstrap(
       getPermissionCatalog(),
     ]);
 
+  const usersById = new Map(users.map((user) => [user.id, user.name]));
+  const attachUserName = <T extends { ownerUserId?: string; userName?: string }>(item: T): T => {
+    if (!item.ownerUserId) return item;
+    const displayName = usersById.get(item.ownerUserId);
+    return {
+      ...item,
+      userName: displayName || item.userName,
+    };
+  };
+
   const billingDocId = sessionUser && !isSuperAdmin ? `billing_${sessionUser.id}` : 'billing';
   let billingConfig = await getDocData<BillingConfig>(
     'system_config',
@@ -179,11 +189,11 @@ export async function bootstrap(
 
   return {
     profile: profile || null,
-    customers: scopedCustomers.sort((a, b) => a.name.localeCompare(b.name)),
-    sales: scopedSales.sort((a, b) => b.createdAt - a.createdAt),
-    priceConfigs: finalPriceConfigs,
-    priceLogs: scopedPriceLogs.sort((a, b) => b.timestamp - a.timestamp),
-    inventory: scopedInventory,
+    customers: scopedCustomers.map(attachUserName).sort((a, b) => a.name.localeCompare(b.name)),
+    sales: scopedSales.map(attachUserName).sort((a, b) => b.createdAt - a.createdAt),
+    priceConfigs: finalPriceConfigs.map(attachUserName),
+    priceLogs: scopedPriceLogs.map(attachUserName).sort((a, b) => b.timestamp - a.timestamp),
+    inventory: scopedInventory.map(attachUserName),
     users: finalUsers,
     billingConfig,
     brandingConfig,

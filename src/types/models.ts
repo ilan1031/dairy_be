@@ -101,6 +101,7 @@ export interface Customer {
   address?: string;
   notes?: string;
   ownerUserId?: string;
+  userName?: string;
   updatedAt: number;
 }
 
@@ -116,6 +117,7 @@ export interface Sale {
   paymentType: string;
   location: string;
   ownerUserId?: string;
+  userName?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -124,6 +126,7 @@ export interface PriceConfig {
   milkType: string;
   currentPrice: number;
   ownerUserId?: string;
+  userName?: string;
   updatedAt: number;
 }
 
@@ -133,6 +136,7 @@ export interface PriceLog {
   oldPrice: number;
   newPrice: number;
   ownerUserId?: string;
+  userName?: string;
   timestamp: number;
 }
 
@@ -144,6 +148,7 @@ export interface MilkInventory {
   a2Liters: number;
   customStocksRaw: string;
   ownerUserId?: string;
+  userName?: string;
   updatedAt: number;
 }
 
